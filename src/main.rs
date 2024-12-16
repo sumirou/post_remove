@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
     let posts = match tweets.as_array() {
         Some(data) => {
             let filtered_data: Vec<serde_json::Value> = data.iter().filter(|tweet| {
-                let post_created_at = tweet["created_at"].as_str().unwrap_or_else(|| {
+                let post_created_at = tweet["tweet"]["created_at"].as_str().unwrap_or_else(|| {
                     eprintln!("'created_at' not found.");
                     exit(line!() as i32);
                 });
@@ -115,13 +115,13 @@ async fn main() -> Result<()> {
     for tweet in posts {
         let data = &tweet["tweet"];
         if *data != serde_json::Value::Null {
-            let id = tweet["id"].as_str().unwrap_or_else(||{
-                eprintln!("id not found");
+            let id = data["id"].as_str().unwrap_or_else(||{
+                eprintln!("'id' not found");
                 exit(line!() as i32);
             });
             // check
             let id = id.parse::<u64>().unwrap_or_else(|err| {
-                eprintln!("id isn't u64. id={} err={}", id, err);
+                eprintln!("'id' isn't u64. id={} err={}", id, err);
                 exit(line!() as i32);
             });
 
