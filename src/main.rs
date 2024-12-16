@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
                     eprintln!("parse failed. tweet_created_at={} err={}", post_created_at, err);
                     exit(line!() as i32);
                 });
-                post_time > time
+                post_time < time
             }).cloned().collect();
             filtered_data
         },
