@@ -4,6 +4,7 @@ use dotenv::dotenv;
 use reqwest::Response;
 use serde_json::Value;
 use std::{env, fs::File, io::BufReader, process::exit};
+use oauth1::{Token, authorize};
 
 struct ProcessedValue {
     data: Vec<Value>,
@@ -58,16 +59,19 @@ fn get_tweets_data(file: &str) -> serde_json::Value {
     value
 }
 
-async fn delete_tweet(id: u64, key: &str, secret: &str) -> Result<Response, reqwest::Error> {
+async fn delete_tweet(id: u64, consumer_key: &str, consumer_secret: &str, access_token: &str, access_secret: &str) -> Result<Response, reqwest::Error> {
     let client = reqwest::Client::new();
 
     let delete_url = format!(
         "https://api.twitter.com/2/tweets/{}", id
     );
 
+    let consumer = Token::new(consumer_key, consumer_secret);
+    let access = Token::new(access_token, access_secret);
+    let authorize_header = authorize("DELETE", &delete_url, &consumer, Some(&access), None);
     client
         .delete(&delete_url)
-        .header("Authorization", format!("OAuth oauth_consumer_key={}, oauth_consumer_secret={}", key, secret))
+        .header("Authorization", authorize_header)
         .send()
         .await
 }
@@ -77,10 +81,22 @@ async fn main() -> Result<()> {
     dotenv().ok();
     let cli = Cli::parse();
 
-    let consumer_key = env::var("CONSUMER_KEY")
-        .expect("CONSUMER_KEY must be set");
-    let consumer_secret = env::var("CONSUMER_SECRET")
-        .expect("CONSUMER_SECRET must be set");
+    let consumer_key = env::var("CONSUMER_KEY").unwrap_or_else(|err| {
+        eprintln!("CONSUMER_KEY not found in environment. err={}", err);
+        exit(line!() as i32);
+    });
+    let consumer_secret = env::var("CONSUMER_SECRET").unwrap_or_else(|err| {
+        eprintln!("CONSUMER_SECRET not found in environment. err={}", err);
+        exit(line!() as i32);
+    });
+    let access_key = env::var("ACCESS_KEY").unwrap_or_else(|err| {
+        eprintln!("ACCESS_KEY not found in environment. err={}", err);
+        exit(line!() as i32);
+    });
+    let access_secret = env::var("ACCESS_SECRET").unwrap_or_else(|err| {
+        eprintln!("ACCESS_SECRET not found in environment. err={}", err);
+        exit(line!() as i32);
+    });
 
     let tweets = get_tweets_data(&cli.tweets);
     let time = chrono::NaiveDate::parse_from_str(&cli.time, "%Y-%m-%d").unwrap_or_else(|err| {
@@ -125,7 +141,7 @@ async fn main() -> Result<()> {
                 exit(line!() as i32);
             });
 
-            match delete_tweet(id, &consumer_key, &consumer_secret).await {
+            match delete_tweet(id, &consumer_key, &consumer_secret, &access_key, &access_secret).await {
                 core::result::Result::Ok(response) => {
                     if response.status().is_success() {
                         let json_response: serde_json::Value = match response.json().await {
