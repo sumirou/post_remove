@@ -1,4 +1,5 @@
 use anyhow::{Ok, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use dotenv::dotenv;
 use reqwest::Response;
@@ -76,27 +77,56 @@ async fn delete_tweet(id: u64, consumer_key: &str, consumer_secret: &str, access
         .await
 }
 
+async fn delete_task(id: u64, consumer_key: &str, consumer_secret: &str, access_token: &str, access_secret: &str) {
+    loop {
+        let response= delete_tweet(id, &consumer_key, &consumer_secret, &access_token, &access_secret)
+            .await
+            .expect(&format!("failed to delete post. id={}", id));
+        if response.status().is_success() {
+            let json_response: serde_json::Value = response.json().await.expect("failed to decode json.");
+            let result = json_response["data"]["deleted"].as_bool().expect("['data']['deleted'] not found");
+            if result {
+                println!("deleted. id={}", id);
+                return;
+            } else {
+                panic!("faile to delete post. id={}", id);
+            }
+        } else if response.status().as_u16() == 429 {
+            if let Some(retry_after) = response.headers().get("Retry-After") {
+                let retry_time_str = retry_after.to_str().expect("failed parse Retry-After value.");
+                let retry_time = retry_time_str.parse::<u64>().expect("failed parse to u64.");
+
+                println!("wait for rate limit. Retry-After={}", retry_time);
+                tokio::time::sleep(tokio::time::Duration::from_secs(retry_time)).await;
+            } else if let Some(reset_time) = response.headers().get("x-rate-limit-reset") {
+                let timestamp_str = reset_time.to_str().expect("failed parse x-rate-limit-reset.");
+                let timestamp = timestamp_str.parse::<i64>().expect("failed parse to i64");
+                let naive = DateTime::from_timestamp(timestamp, 0).expect("invalid timestamp");
+
+                let now = Utc::now();
+                let sleep_duration = (naive - now).to_std().unwrap();
+                println!("wait till {}. x-rate-limit-reset={}", naive.to_string(), timestamp_str);
+                tokio::time::sleep(sleep_duration).await;
+            } else {
+                // unknown. stop
+                panic!("unknown 429 error");
+            }
+            continue;
+        } else {
+            panic!("failed to delete post. id={} status={}", id, response.status());
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
     let cli = Cli::parse();
 
-    let consumer_key = env::var("CONSUMER_KEY").unwrap_or_else(|err| {
-        eprintln!("CONSUMER_KEY not found in environment. err={}", err);
-        exit(line!() as i32);
-    });
-    let consumer_secret = env::var("CONSUMER_SECRET").unwrap_or_else(|err| {
-        eprintln!("CONSUMER_SECRET not found in environment. err={}", err);
-        exit(line!() as i32);
-    });
-    let access_key = env::var("ACCESS_KEY").unwrap_or_else(|err| {
-        eprintln!("ACCESS_KEY not found in environment. err={}", err);
-        exit(line!() as i32);
-    });
-    let access_secret = env::var("ACCESS_SECRET").unwrap_or_else(|err| {
-        eprintln!("ACCESS_SECRET not found in environment. err={}", err);
-        exit(line!() as i32);
-    });
+    let consumer_key = env::var("CONSUMER_KEY").expect("CONSUMER_KEY not found in environment.");
+    let consumer_secret = env::var("CONSUMER_SECRET").expect("CONSUMER_SECRET not found in environment.");
+    let access_key = env::var("ACCESS_KEY").expect("ACCESS_KEY not found in environment.");
+    let access_secret = env::var("ACCESS_SECRET").expect("ACCESS_SECRET not found in environment.");
 
     let tweets = get_tweets_data(&cli.tweets);
     let time = chrono::NaiveDate::parse_from_str(&cli.time, "%Y-%m-%d").unwrap_or_else(|err| {
@@ -121,7 +151,7 @@ async fn main() -> Result<()> {
             filtered_data
         },
         None => {
-            eprintln!("data isnt valid format.");
+            eprintln!("data isn't valid format.");
             exit(line!() as i32);
         },
     };
@@ -141,37 +171,9 @@ async fn main() -> Result<()> {
                 exit(line!() as i32);
             });
 
-            match delete_tweet(id, &consumer_key, &consumer_secret, &access_key, &access_secret).await {
-                core::result::Result::Ok(response) => {
-                    if response.status().is_success() {
-                        let json_response: serde_json::Value = match response.json().await {
-                            std::result::Result::Ok(data) => data,
-                            Err(err) => {
-                                eprintln!("failed to decode json. err={}", err);
-                                break;
-                            },
-                        };
-                        if json_response["data"]["deleted"].as_bool().unwrap_or(false) {
-                            println!("deleted. id={}", id);
-                            processed_data.process();
-                        } else {
-                            eprintln!("faile to delete post. id={}", id);
-                            break;
-                        }
-                    } else if response.status().as_u16() == 429 {
-                        println!("wait 15min for rate limit. id={}", id);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(15 * 60)).await;
-                        continue;
-                    } else {
-                        eprintln!("failed to delete post. id={} status={}", id, response.status());
-                        break;
-                    }
-                },
-                Err(err) => {
-                    eprintln!("Error deleting tweet ID: {}. Error: {}", id, err);
-                    break;
-                }
-            }
+            delete_task(id, &consumer_key, &consumer_secret, &access_key, &access_secret).await;
+            processed_data.process();
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         }
     }
 
