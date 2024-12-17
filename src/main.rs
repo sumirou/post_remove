@@ -158,6 +158,10 @@ async fn main() -> Result<()> {
                             eprintln!("faile to delete post. id={}", id);
                             break;
                         }
+                    } else if response.status().as_u16() == 429 {
+                        println!("wait 15min for rate limit. id={}", id);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(15 * 60)).await;
+                        continue;
                     } else {
                         eprintln!("failed to delete post. id={} status={}", id, response.status());
                         break;
