@@ -57,15 +57,15 @@ fn get_tweets_data(file: &str) -> serde_json::Value {
 async fn delete_tweet(id: u64, consumer_key: &str, consumer_secret: &str, access_token: &str, access_secret: &str) -> Result<Response, reqwest::Error> {
     let client = reqwest::Client::new();
 
-    let delete_url = format!(
-        "https://api.twitter.com/2/tweets/{}", id
+    let url = format!(
+        "https://api.x.com/1.1/statuses/destroy/{}.json", id
     );
 
     let consumer = Token::new(consumer_key, consumer_secret);
     let access = Token::new(access_token, access_secret);
-    let authorize_header = authorize("DELETE", &delete_url, &consumer, Some(&access), None);
+    let authorize_header = authorize("POST", &url, &consumer, Some(&access), None);
     client
-        .delete(&delete_url)
+        .post(&url)
         .header("Authorization", authorize_header)
         .send()
         .await
@@ -77,14 +77,8 @@ async fn delete_task(id: u64, consumer_key: &str, consumer_secret: &str, access_
             .await
             .expect(&format!("failed to delete post. id={}", id));
         if response.status().is_success() {
-            let json_response: serde_json::Value = response.json().await.expect("failed to decode json.");
-            let result = json_response["data"]["deleted"].as_bool().expect("['data']['deleted'] not found");
-            if result {
-                println!("deleted. id={}", id);
-                return;
-            } else {
-                panic!("faile to delete post. id={}", id);
-            }
+            println!("deleted. id={}", id);
+            return;
         } else if response.status().as_u16() == 429 {
             if let Some(retry_after) = response.headers().get("Retry-After") {
                 let retry_time_str = retry_after.to_str().expect("failed parse Retry-After value.");
@@ -106,6 +100,10 @@ async fn delete_task(id: u64, consumer_key: &str, consumer_secret: &str, access_
                 panic!("unknown 429 error");
             }
             continue;
+        } else if response.status().as_u16() == 404 {
+            // processed_dataから消す為に戻す
+            println!("not found. id={}", id);
+            return;
         } else {
             panic!("failed to delete post. id={} status={}", id, response.status());
         }
