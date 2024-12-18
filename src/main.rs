@@ -4,7 +4,7 @@ use clap::Parser;
 use dotenv::dotenv;
 use reqwest::Response;
 use serde_json::Value;
-use std::{env, fs::File, io::BufReader};
+use std::{env, fs::File, io::BufReader, sync::{atomic::{AtomicBool, Ordering}, Arc}};
 use oauth1::{Token, authorize};
 
 struct ProcessedValue {
@@ -112,6 +112,15 @@ async fn delete_task(id: u64, consumer_key: &str, consumer_secret: &str, access_
 
 #[tokio::main]
 async fn main() -> Result<()> {
+
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    ctrlc::set_handler(move || {
+        println!("Ctrl+C received.");
+        r.store(false, Ordering::SeqCst);
+    }).expect("failed to set Ctrl+C handler.");
+
     dotenv().ok();
     let cli = Cli::parse();
 
@@ -136,6 +145,10 @@ async fn main() -> Result<()> {
     let mut processed_data = ProcessedValue::new(posts.clone(), cli.tweets.clone());
 
     for tweet in posts {
+        if !running.load(Ordering::SeqCst) {
+            println!("stop.");
+            break;
+        }
         let data = &tweet["tweet"];
         if *data != serde_json::Value::Null {
             let id = data["id"].as_str().expect("'id' not found");
@@ -144,7 +157,7 @@ async fn main() -> Result<()> {
 
             delete_task(id, &consumer_key, &consumer_secret, &access_key, &access_secret).await;
             processed_data.process();
-            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
         }
     }
 
