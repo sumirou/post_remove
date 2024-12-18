@@ -4,7 +4,7 @@ use clap::Parser;
 use dotenv::dotenv;
 use reqwest::Response;
 use serde_json::Value;
-use std::{env, fs::File, io::BufReader, process::exit};
+use std::{env, fs::File, io::BufReader};
 use oauth1::{Token, authorize};
 
 struct ProcessedValue {
@@ -48,15 +48,9 @@ struct Cli {
 }
 
 fn get_tweets_data(file: &str) -> serde_json::Value {
-    let file = File::open(file).unwrap_or_else(|err| {
-        eprintln!("file load failed. {}", err);
-        exit(line!() as i32);
-    });
+    let file = File::open(file).expect("file open failed.");
     let reader: BufReader<File> = BufReader::new(file);
-    let value: serde_json::Value = serde_json::from_reader(reader).unwrap_or_else(|err| {
-        eprintln!("failed file load. {}", err);
-        exit(line!() as i32);
-    });
+    let value: serde_json::Value = serde_json::from_reader(reader).expect("file load failed.");
     value
 }
 
@@ -104,7 +98,7 @@ async fn delete_task(id: u64, consumer_key: &str, consumer_secret: &str, access_
                 let naive = DateTime::from_timestamp(timestamp, 0).expect("invalid timestamp");
 
                 let now = Utc::now();
-                let sleep_duration = (naive - now).to_std().unwrap();
+                let sleep_duration = (naive - now).to_std().expect(&format!("failed calculate duration. naive={} now={}", naive, now));
                 println!("wait till {}. x-rate-limit-reset={}", naive.to_string(), timestamp_str);
                 tokio::time::sleep(sleep_duration).await;
             } else {
@@ -129,31 +123,16 @@ async fn main() -> Result<()> {
     let access_secret = env::var("ACCESS_SECRET").expect("ACCESS_SECRET not found in environment.");
 
     let tweets = get_tweets_data(&cli.tweets);
-    let time = chrono::NaiveDate::parse_from_str(&cli.time, "%Y-%m-%d").unwrap_or_else(|err| {
-        eprintln!("failed time parse (format Y-m-d). {}", err);
-        exit(line!() as i32);
-    });
-
-    let posts = match tweets.as_array() {
-        Some(data) => {
-            let filtered_data: Vec<serde_json::Value> = data.iter().filter(|tweet| {
-                let post_created_at = tweet["tweet"]["created_at"].as_str().unwrap_or_else(|| {
-                    eprintln!("'created_at' not found.");
-                    exit(line!() as i32);
-                });
-                let post_time = chrono::NaiveDate::parse_from_str(post_created_at, "%a %b %d %H:%M:%S %z %Y")
-                    .unwrap_or_else(|err| {
-                    eprintln!("parse failed. tweet_created_at={} err={}", post_created_at, err);
-                    exit(line!() as i32);
-                });
-                post_time < time
-            }).cloned().collect();
-            filtered_data
-        },
-        None => {
-            eprintln!("data isn't valid format.");
-            exit(line!() as i32);
-        },
+    let time = chrono::NaiveDate::parse_from_str(&cli.time, "%Y-%m-%d").expect("failed time parse. (format %Y-%m-%d)");
+    let posts = {
+        let data = tweets.as_array().expect("data isn't valid format.");
+        let filtered_data: Vec<serde_json::Value> = data.iter().filter(|tweet| {
+            let post_created_at = tweet["tweet"]["created_at"].as_str().expect("'created_at' not found.");
+            let post_time = chrono::NaiveDate::parse_from_str(post_created_at, "%a %b %d %H:%M:%S %z %Y")
+                .expect(&format!("parse failed. expect format (%a %b %d %H:%M:%S %z %Y). tweet_created_at={}", post_created_at));
+            post_time < time
+        }).cloned().collect();
+        filtered_data
     };
 
     let mut processed_data = ProcessedValue::new(posts.clone(), cli.tweets.clone());
@@ -161,15 +140,9 @@ async fn main() -> Result<()> {
     for tweet in posts {
         let data = &tweet["tweet"];
         if *data != serde_json::Value::Null {
-            let id = data["id"].as_str().unwrap_or_else(||{
-                eprintln!("'id' not found");
-                exit(line!() as i32);
-            });
+            let id = data["id"].as_str().expect("'id' not found");
             // check
-            let id = id.parse::<u64>().unwrap_or_else(|err| {
-                eprintln!("'id' isn't u64. id={} err={}", id, err);
-                exit(line!() as i32);
-            });
+            let id = id.parse::<u64>().expect(&format!("'id' isn't u64. id={}", id));
 
             delete_task(id, &consumer_key, &consumer_secret, &access_key, &access_secret).await;
             processed_data.process();
